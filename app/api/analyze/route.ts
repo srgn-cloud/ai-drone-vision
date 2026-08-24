@@ -64,6 +64,9 @@ FONTOS SZABÁLYOK:
 5. A méretek és pénzügyi értékek vizuális becslések.
 6. Ne állítsd, hogy hivatalos építészeti, statikai vagy értékbecslői vizsgálat történt.
 7. A választ kizárólag a megadott JSON schema szerint add vissza.
+8. A confidence és score értékek 0 és 100 közötti értékek legyenek.
+9. A V5 koordináták 0 és 100 között legyenek.
+10. A végső válasz kizárólag JSON legyen.
 
 FELHASZNÁLÓI MEGJEGYZÉS:
 ${userPrompt || "Nincs extra megjegyzés."}
@@ -217,9 +220,9 @@ Ne használj markdown kódblokkot.
 function buildSchema(versions: string[]) {
   const properties: Record<string, unknown> = {};
 
-  /* =========================
+  /* =======================================================
      V2
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V2")) {
     properties.v2 = {
@@ -278,9 +281,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V3
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V3")) {
     properties.v3 = {
@@ -326,9 +329,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V4
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V4")) {
     properties.v4 = {
@@ -421,9 +424,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V5
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V5")) {
     properties.v5 = {
@@ -497,9 +500,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V6
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V6")) {
     properties.v6 = {
@@ -672,9 +675,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V7
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V7")) {
     properties.v7 = {
@@ -696,7 +699,6 @@ function buildSchema(versions: string[]) {
 
         detectedFeatures: {
           type: "array",
-
           items: {
             type: "string",
           },
@@ -720,7 +722,6 @@ function buildSchema(versions: string[]) {
 
         recommendedActions: {
           type: "array",
-
           items: {
             type: "string",
           },
@@ -746,9 +747,9 @@ function buildSchema(versions: string[]) {
     };
   }
 
-  /* =========================
+  /* =======================================================
      V8
-  ========================= */
+  ======================================================= */
 
   if (versions.includes("V8")) {
     properties.v8 = {
@@ -790,7 +791,6 @@ function buildSchema(versions: string[]) {
 
         risks: {
           type: "array",
-
           items: {
             type: "string",
           },
@@ -798,7 +798,6 @@ function buildSchema(versions: string[]) {
 
         opportunities: {
           type: "array",
-
           items: {
             type: "string",
           },
@@ -837,9 +836,9 @@ function buildSchema(versions: string[]) {
 
 export async function POST(request: Request) {
   try {
-    /* =========================
+    /* =======================================================
        API KEY
-    ========================= */
+    ======================================================= */
 
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -854,9 +853,9 @@ export async function POST(request: Request) {
       );
     }
 
-    /* =========================
+    /* =======================================================
        REQUEST
-    ========================= */
+    ======================================================= */
 
     let body: RequestBody;
 
@@ -874,9 +873,9 @@ export async function POST(request: Request) {
       );
     }
 
-    /* =========================
+    /* =======================================================
        IMAGE CHECK
-    ========================= */
+    ======================================================= */
 
     if (!body.image) {
       return NextResponse.json(
@@ -906,77 +905,71 @@ export async function POST(request: Request) {
       );
     }
 
-    /* =========================
+    /* =======================================================
        PACKAGE
-    ========================= */
+    ======================================================= */
 
-    const packageType = getPackage(
-      body.package
+    const packageType = getPackage(body.package);
+
+    const versions = PACKAGE_VERSIONS[packageType];
+
+    /* =======================================================
+       INSTRUCTIONS
+    ======================================================= */
+
+    const instructions = buildInstructions(
+      packageType,
+      versions,
+      body.prompt || ""
     );
 
-    const versions =
-      PACKAGE_VERSIONS[packageType];
-
-    /* =========================
-       INSTRUCTIONS
-    ========================= */
-
-    const instructions =
-      buildInstructions(
-        packageType,
-        versions,
-        body.prompt || ""
-      );
-
-    /* =========================
+    /* =======================================================
        SCHEMA
-    ========================= */
+    ======================================================= */
 
-    const schema =
-      buildSchema(versions);
+    const schema = buildSchema(versions);
 
-    /* =========================
-       OPENAI
-    ========================= */
+    /* =======================================================
+       OPENAI RESPONSE
+    ======================================================= */
 
-    const response =
-      await openai.responses.create({
-        model: "gpt-5.6",
+    const response = await openai.responses.create({
+      model: "gpt-5.6",
 
-        input: [
-          {
-            role: "user",
+      input: [
+        {
+          role: "user",
 
-            content: [
-              {
-                type: "input_text",
-                text: instructions,
-              },
+          content: [
+            {
+              type: "input_text",
+              text: instructions,
+            },
 
-              {
-                type: "input_image",
-                image_url: body.image,
-              },
-            ],
-          },
-        ],
-
-        text: {
-          format: {
-            type: "json_schema",
-            name: "ai_drone_vision_analysis",
-            strict: true,
-            schema,
-          },
+            {
+              type: "input_image",
+              image_url: body.image,
+              detail: "high",
+            },
+          ],
         },
-      });
+      ],
 
-    /* =========================
+      text: {
+        format: {
+          type: "json_schema",
+          name: "ai_drone_vision_analysis",
+          strict: true,
+          schema,
+        },
+      },
+    });
+
+    /* =======================================================
        OUTPUT
-    ========================= */
+    ======================================================= */
 
-    const outputText =
-      response.output_text;
+    const outputText = response.output_text;
 
     if (!outputText) {
       throw new Error(
@@ -984,15 +977,14 @@ export async function POST(request: Request) {
       );
     }
 
-    /* =========================
+    /* =======================================================
        JSON PARSE
-    ========================= */
+    ======================================================= */
 
     let analysis: unknown;
 
     try {
-      analysis =
-        JSON.parse(outputText);
+      analysis = JSON.parse(outputText);
     } catch {
       console.error(
         "Invalid AI JSON:",
@@ -1004,17 +996,14 @@ export async function POST(request: Request) {
       );
     }
 
-    /* =========================
+    /* =======================================================
        RESPONSE
-    ========================= */
+    ======================================================= */
 
     return NextResponse.json({
       success: true,
-
       package: packageType,
-
       versions,
-
       analysis,
     });
   } catch (error) {
@@ -1030,32 +1019,39 @@ export async function POST(request: Request) {
       message = error.message;
     }
 
-    /* =========================
-       OPENAI ERROR
-    ========================= */
+    /* =======================================================
+       OPENAI ERROR HANDLING
+    ======================================================= */
 
     if (
       typeof error === "object" &&
       error !== null
     ) {
-      const possibleError =
-        error as {
-          status?: number;
-          code?: string;
-        };
+      const possibleError = error as {
+        status?: number;
+        code?: string;
+        message?: string;
+      };
 
-      if (
-        possibleError.status === 429
-      ) {
+      if (possibleError.status === 400) {
+        message =
+          possibleError.message ||
+          "Érvénytelen kérés érkezett az OpenAI API felé.";
+      }
+
+      if (possibleError.status === 401) {
+        message =
+          "Az OpenAI API kulcs érvénytelen vagy nem megfelelő.";
+      }
+
+      if (possibleError.status === 429) {
         message =
           "Az OpenAI API jelenleg nem tudja feldolgozni a kérést. Ellenőrizd az API kreditet és a számlázási beállításokat.";
       }
 
-      if (
-        possibleError.status === 401
-      ) {
+      if (possibleError.status === 500) {
         message =
-          "Az OpenAI API kulcs érvénytelen vagy nem megfelelő.";
+          "Az OpenAI szerverén átmeneti hiba történt.";
       }
     }
 

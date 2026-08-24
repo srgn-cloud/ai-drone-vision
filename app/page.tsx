@@ -249,12 +249,16 @@ export default function Home() {
             if (typeof reader.result === "string") {
               resolve(reader.result);
             } else {
-              reject(new Error("A kép beolvasása sikertelen."));
+              reject(
+                new Error("A kép beolvasása sikertelen.")
+              );
             }
           };
 
           reader.onerror = () => {
-            reject(new Error("A kép beolvasása sikertelen."));
+            reject(
+              new Error("A kép beolvasása sikertelen.")
+            );
           };
 
           reader.readAsDataURL(file);
@@ -369,7 +373,6 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <div className="mx-auto max-w-[1500px] px-6 py-8">
-
         <header className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-center">
           <div className="flex items-center gap-4">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center">
@@ -443,11 +446,9 @@ export default function Home() {
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[430px_1fr]">
-
           {/* INPUT */}
 
           <section className="h-fit rounded-3xl border border-slate-800 bg-slate-900 p-6">
-
             <h2 className="text-xl font-bold">
               Ingatlan elemzése
             </h2>
@@ -460,7 +461,6 @@ export default function Home() {
 
             {images.length === 0 ? (
               <label className="mt-6 flex min-h-[280px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-950 p-6 text-center transition hover:border-blue-500">
-
                 <div className="text-6xl">
                   📷
                 </div>
@@ -495,7 +495,6 @@ export default function Home() {
               </label>
             ) : (
               <div className="mt-6">
-
                 <div className="grid grid-cols-2 gap-3">
                   {images.map((img, index) => (
                     <div
@@ -577,7 +576,6 @@ export default function Home() {
                     ))}
                   </div>
                 </div>
-
               </div>
             )}
 
@@ -615,7 +613,6 @@ export default function Home() {
           {/* RESULTS */}
 
           <section className="space-y-6">
-
             {!analysis && !loading && (
               <EmptyScreen
                 selectedPackage={selectedPackage}
@@ -861,67 +858,77 @@ export default function Home() {
                             />
 
                             {imageIndex === 0 &&
-                              (analysis.v5.markers ?? []).map(
-                                (marker) => {
-                                  const x = clamp(
-                                    marker.x,
-                                    0,
-                                    100
-                                  );
+                              (() => {
+                                /*
+                                 * JAVÍTÁS:
+                                 * Az analysis.v5 lehet undefined a TypeScript szerint.
+                                 * Ezért a markereket előbb biztonságosan kivesszük.
+                                 */
+                                const markers =
+                                  analysis.v5?.markers ?? [];
 
-                                  const y = clamp(
-                                    marker.y,
-                                    0,
-                                    100
-                                  );
+                                return markers.map(
+                                  (marker) => {
+                                    const x = clamp(
+                                      marker.x,
+                                      0,
+                                      100
+                                    );
 
-                                  const width = clamp(
-                                    marker.width,
-                                    0.5,
-                                    Math.max(
+                                    const y = clamp(
+                                      marker.y,
+                                      0,
+                                      100
+                                    );
+
+                                    const width = clamp(
+                                      marker.width,
                                       0.5,
-                                      100 - x
-                                    )
-                                  );
+                                      Math.max(
+                                        0.5,
+                                        100 - x
+                                      )
+                                    );
 
-                                  const height = clamp(
-                                    marker.height,
-                                    0.5,
-                                    Math.max(
+                                    const height = clamp(
+                                      marker.height,
                                       0.5,
-                                      100 - y
-                                    )
-                                  );
+                                      Math.max(
+                                        0.5,
+                                        100 - y
+                                      )
+                                    );
 
-                                  return (
-                                    <div
-                                      key={marker.id}
-                                      className="absolute"
-                                      style={{
-                                        left: `${x}%`,
-                                        top: `${y}%`,
-                                        width: `${width}%`,
-                                        height: `${height}%`,
-                                      }}
-                                    >
-                                      <div className="absolute inset-0 rounded-md border-2 border-red-500 bg-red-500/10" />
+                                    return (
+                                      <div
+                                        key={marker.id}
+                                        className="absolute"
+                                        style={{
+                                          left: `${x}%`,
+                                          top: `${y}%`,
+                                          width: `${width}%`,
+                                          height: `${height}%`,
+                                        }}
+                                      >
+                                        <div className="absolute inset-0 rounded-md border-2 border-red-500 bg-red-500/10" />
 
-                                      <div className="absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md bg-red-600 px-2 py-1 text-[11px] font-bold text-white">
-                                        #{marker.id}{" "}
-                                        {marker.label}
+                                        <div className="absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md bg-red-600 px-2 py-1 text-[11px] font-bold text-white">
+                                          #{marker.id}{" "}
+                                          {marker.label}
+                                        </div>
+
+                                        <div className="absolute bottom-0 right-0 z-10 rounded-tl-md bg-black/80 px-2 py-1 text-[9px] text-white">
+                                          {Math.round(
+                                            (marker.confidence ?? 0) *
+                                              100
+                                          )}
+                                          %
+                                        </div>
                                       </div>
-
-                                      <div className="absolute bottom-0 right-0 z-10 rounded-tl-md bg-black/80 px-2 py-1 text-[9px] text-white">
-                                        {Math.round(
-                                          (marker.confidence ?? 0) *
-                                            100
-                                        )}
-                                        %
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                              )}
+                                    );
+                                  }
+                                );
+                              })()}
                           </div>
                         ))}
                       </div>
@@ -1323,7 +1330,6 @@ function PackageSelector({
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-white">
       <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-5 py-10">
-
         <div className="pointer-events-none absolute left-1/2 top-1/2 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-600/10 blur-[140px]" />
 
         <div className="relative z-10 mb-10 text-center">
