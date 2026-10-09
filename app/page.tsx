@@ -1,1695 +1,314 @@
-"use client";
+ "use client";
 
-import { ChangeEvent, ReactNode, useState } from "react";
+import { ChangeEvent, useState } from "react";
 
-type PackageType = "START" | "PRO" | "PREMIUM";
-
-type PackageConfig = {
-  id: PackageType;
-  name: string;
-  price: string;
-  description: string;
-  versions: string[];
-  image: string;
-  badge?: string;
+type PlanId = "QUICK" | "FULL" | "PATROL";
+type FieldInfo = {
+  client: string;
+  fieldName: string;
+  location: string;
+  hectares: string;
+  crop: string;
+  inspectedAt: string;
+  notes: string;
 };
+type Box = { x: number; y: number; width: number; height: number };
+type Finding = {
+  id: number;
+  title: string;
+  category: string;
+  severity: string;
+  certainty: string;
+  observation: string;
+  visualEvidence: string;
+  location: string;
+  recommendation: string;
+  imageIndex: number;
+  box: Box | null;
+};
+type Analysis = {
+  summary: string;
+  overallRisk: string;
+  overview: {
+    vegetation: string;
+    ground: string;
+    water: string;
+    access: string;
+    coverage: string;
+  };
+  findings: Finding[];
+  priorities: string[];
+  recommendedChecks: string[];
+  limitations: string[];
+  nextVisitFocus: string;
+};
+type UploadedImage = { name: string; dataUrl: string };
 
-const PACKAGES: PackageConfig[] = [
+const PLANS: { id: PlanId; name: string; tag: string; price: string; description: string; maxImages: number; features: string[] }[] = [
   {
-    id: "START",
-    name: "START",
-    price: "5 990 Ft",
-    description: "Alap AI ingatlanfelmérés",
-    versions: ["V2", "V3", "V4"],
-    image: "/package-start.jpg",
+    id: "QUICK", name: "Gyors ellenőrzés", tag: "ALAP", price: "9 990 Ft-tól", maxImages: 2,
+    description: "Célzott, gyors ránézés a helyszín látható állapotára.",
+    features: ["Legfeljebb 2 drónfotó", "Látható eltérések", "Rövid ellenőrzési jelentés"],
   },
   {
-    id: "PRO",
-    name: "PRO",
-    price: "12 990 Ft",
-    description: "Komplett ingatlanfelmérés és felújítás-tervezés",
-    versions: ["V2", "V3", "V4", "V5", "V6"],
-    image: "/package-pro.jpg",
-    badge: "LEGNÉPSZERŰBB",
+    id: "FULL", name: "Teljes felmérés", tag: "AJÁNLOTT", price: "24 990 Ft-tól", maxImages: 6,
+    description: "Több nézőpontból készülő, részletes vizuális értékelés.",
+    features: ["Legfeljebb 6 drónfotó", "Hibajelölések és prioritások", "Nyomtatható PDF-jelentés"],
   },
   {
-    id: "PREMIUM",
-    name: "PREMIUM",
-    price: "39 990 Ft",
-    description: "Teljes AI ingatlan- és befektetési elemzés",
-    versions: ["V2", "V3", "V4", "V5", "V6", "V7", "V8"],
-    image: "/package-premium.jpg",
+    id: "PATROL", name: "Rendszeres őrjárat", tag: "FOLYAMATOS", price: "Egyedi ajánlat", maxImages: 8,
+    description: "Ismételt szemlékhez használható felmérési mód.",
+    features: ["Legfeljebb 8 fotó / alkalom", "Figyelendő kockázatok", "Következő látogatás fókusza"],
   },
 ];
 
-type ErrorItem = {
-  id: number;
-  category: string;
-  location: string;
-  severity: string;
-  confidence: number;
-  observation: string;
-  recommendation: string;
+const emptyField: FieldInfo = { client: "", fieldName: "", location: "", hectares: "", crop: "", inspectedAt: "", notes: "" };
+const riskTone: Record<string, string> = {
+  kritikus: "border-red-400/40 bg-red-500/10 text-red-300",
+  magas: "border-orange-400/40 bg-orange-500/10 text-orange-300",
+  közepes: "border-amber-400/40 bg-amber-500/10 text-amber-300",
+  alacsony: "border-emerald-400/40 bg-emerald-500/10 text-emerald-300",
+  információ: "border-sky-400/40 bg-sky-500/10 text-sky-300",
+  "nem meghatározható": "border-slate-400/40 bg-slate-500/10 text-slate-300",
+};
+const mapTone: Record<string, string> = {
+  kritikus: "#f87171", magas: "#fb923c", közepes: "#fbbf24", alacsony: "#4ade80", információ: "#7dd3fc",
 };
 
-type Marker = {
-  id: number;
-  type: string;
-  label: string;
-  severity: string;
-  confidence: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
+async function prepareImage(file: File): Promise<UploadedImage> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error("Csak JPG, PNG vagy WEBP képet tölts fel.");
+  if (file.size > 16 * 1024 * 1024) throw new Error(`A(z) ${file.name} túl nagy (maximum 16 MB).`);
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error(`Nem sikerült beolvasni: ${file.name}`));
+      element.src = url;
+    });
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const scale = Math.min(1, 1500 / longest);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("A böngésző nem tudta előkészíteni a képet.");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+    if (dataUrl.length > 2_800_000) throw new Error(`A(z) ${file.name} tömörítve is túl nagy.`);
+    return { name: file.name, dataUrl };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
-type Priority = {
-  priority: number;
-  work: string;
-  reason: string;
-  urgency: string;
-};
-
-type Task = {
-  task: string;
-  reason: string;
-  material: string;
-  quantity: string;
-  materialCost: string;
-  laborCost: string;
-  duration: string;
-};
-
-type Phase = {
-  phase: number;
-  name: string;
-  description: string;
-  priority: string;
-  estimatedDuration: string;
-  estimatedCost: string;
-  tasks?: Task[];
-};
-
-type Material = {
-  material: string;
-  quantity: string;
-  estimatedCost: string;
-  purpose: string;
-};
-
-type Analysis = {
-  v2?: {
-    errors?: ErrorItem[];
-    totalErrors?: number;
-  };
-
-  v3?: {
-    estimatedArea?: string;
-    estimatedWallArea?: string;
-    estimatedFloorArea?: string;
-    estimatedRoofArea?: string;
-    visibleWindows?: number;
-    visibleDoors?: number;
-    measurementConfidence?: number;
-    note?: string;
-  };
-
-  v4?: {
-    conditionScore?: number;
-    condition?: string;
-    explanation?: string;
-    criticalErrors?: number;
-    highErrors?: number;
-    mediumErrors?: number;
-    lowErrors?: number;
-    renovationPriorities?: Priority[];
-    costCategory?: string;
-    estimatedCostRange?: string;
-  };
-
-  v5?: {
-    markers?: Marker[];
-  };
-
-  v6?: {
-    projectSummary?: string;
-    overallPriority?: string;
-    totalEstimatedCost?: string;
-    estimatedDuration?: string;
-    phases?: Phase[];
-    materials?: Material[];
-    warnings?: string[];
-  };
-
-  v7?: {
-    propertyType?: string;
-    architecturalStyle?: string;
-    estimatedRooms?: number;
-    detectedFeatures?: string[];
-    exteriorCondition?: string;
-    interiorCondition?: string;
-    roofCondition?: string;
-    facadeCondition?: string;
-    recommendedActions?: string[];
-    renovationPotential?: string;
-  };
-
-  v8?: {
-    investmentScore?: number;
-    renovationValue?: string;
-    estimatedAfterRenovationValue?: string;
-    estimatedInvestment?: string;
-    estimatedReturn?: string;
-    roi?: string;
-    recommendation?: string;
-    investorSummary?: string;
-    risks?: string[];
-    opportunities?: string[];
-  };
-};
+function Pill({ children, tone = "" }: { children: React.ReactNode; tone?: string }) {
+  return <span className={`inline-flex rounded-full border px-3 py-1 text-[11px] font-bold ${tone || "border-[#365b43] bg-[#173324] text-[#b4d8bd]"}`}>{children}</span>;
+}
+function SmallTitle({ overline, title, description }: { overline: string; title: string; description?: string }) {
+  return <div className="mb-5"><p className="text-[11px] font-black uppercase tracking-[.21em] text-lime-300">{overline}</p><h2 className="mt-2 text-2xl font-black tracking-tight text-white">{title}</h2>{description && <p className="agri-muted mt-2 text-sm leading-6">{description}</p>}</div>;
+}
+function DataRow({ label, value }: { label: string; value: string }) {
+  return <div className="border-b border-[#294536] py-2.5 last:border-0"><p className="text-[11px] font-bold uppercase tracking-wide text-[#83a891]">{label}</p><p className="mt-1 break-words text-sm leading-6 text-[#e4f5e8]">{value || "Nincs megadva"}</p></div>;
+}
 
 export default function Home() {
-  const [selectedPackage, setSelectedPackage] =
-    useState<PackageConfig | null>(null);
-
-  const [images, setImages] = useState<string[]>([]);
-  const [fileNames, setFileNames] = useState<string[]>([]);
-  const [prompt, setPrompt] = useState("");
+  const [plan, setPlan] = useState<PlanId>("FULL");
+  const [field, setField] = useState<FieldInfo>(emptyField);
+  const [images, setImages] = useState<UploadedImage[]>([]);
+  const [activeImage, setActiveImage] = useState(0);
+  const [accessCode, setAccessCode] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [reportTime, setReportTime] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const selectedPlan = PLANS.find((item) => item.id === plan)!;
 
-  function selectPackage(packageConfig: PackageConfig) {
-    setSelectedPackage(packageConfig);
+  function changePlan(next: PlanId) {
+    const limit = PLANS.find((item) => item.id === next)!.maxImages;
+    setPlan(next);
+    setImages((current) => current.slice(0, limit));
+    setActiveImage(0);
     setAnalysis(null);
-    setImages([]);
-    setFileNames([]);
-    setPrompt("");
     setError("");
   }
-
-  function changePackage() {
-    if (loading) return;
-
-    setSelectedPackage(null);
+  function updateField(key: keyof FieldInfo, value: string) {
+    setField((current) => ({ ...current, [key]: value }));
     setAnalysis(null);
-    setImages([]);
-    setFileNames([]);
-    setPrompt("");
-    setError("");
   }
-
-  function handleImageUpload(
-    event: ChangeEvent<HTMLInputElement>
-  ) {
+  async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files || []);
-
-    if (!files.length) return;
-
-    const maxImages =
-      selectedPackage?.id === "START" ? 1 : 8;
-
-    if (files.length > maxImages) {
-      setError(
-        selectedPackage?.id === "START"
-          ? "A START csomagban csak 1 kép tölthető fel."
-          : "Maximum 8 kép tölthető fel."
-      );
-
-      event.target.value = "";
-      return;
-    }
-
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        setError("Csak képfájlt tölts fel.");
-        event.target.value = "";
-        return;
-      }
-
-      if (file.size > 20 * 1024 * 1024) {
-        setError(
-          `A(z) "${file.name}" kép maximális mérete 20 MB lehet.`
-        );
-        event.target.value = "";
-        return;
-      }
-    }
-
-    setError("");
-    setAnalysis(null);
-
-    const readers = files.map(
-      (file) =>
-        new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-
-          reader.onload = () => {
-            if (typeof reader.result === "string") {
-              resolve(reader.result);
-            } else {
-              reject(
-                new Error("A kép beolvasása sikertelen.")
-              );
-            }
-          };
-
-          reader.onerror = () => {
-            reject(
-              new Error("A kép beolvasása sikertelen.")
-            );
-          };
-
-          reader.readAsDataURL(file);
-        })
-    );
-
-    Promise.all(readers)
-      .then((results) => {
-        setImages(results);
-        setFileNames(files.map((file) => file.name));
-      })
-      .catch(() => {
-        setError("A képek beolvasása sikertelen.");
-      });
-
     event.target.value = "";
+    if (!files.length) return;
+    if (files.length + images.length > selectedPlan.maxImages) {
+      setError(`Ehhez a csomaghoz legfeljebb ${selectedPlan.maxImages} kép választható.`);
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      const prepared = await Promise.all(files.map(prepareImage));
+      const total = [...images, ...prepared].reduce((sum, item) => sum + item.dataUrl.length, 0);
+      if (total > 3_600_000) throw new Error("A képek együtt túl nagyok. Válassz kevesebb képet.");
+      setImages((current) => [...current, ...prepared]);
+      setAnalysis(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Hiba történt a képek feltöltésekor.");
+    } finally {
+      setUploading(false);
+    }
   }
-
-  async function analyzeImage() {
-    if (!selectedPackage) {
-      setError("Először válassz elemzési csomagot.");
-      return;
-    }
-
+  function removeImage(index: number) {
+    setImages((current) => current.filter((_, i) => i !== index));
+    setActiveImage(0);
+    setAnalysis(null);
+  }
+  async function runAnalysis() {
     if (!images.length) {
-      setError("Először tölts fel egy képet.");
+      setError("Elöször legalább egy drónfotót tölts fel.");
       return;
     }
-
-    if (
-      selectedPackage.id === "START" &&
-      images.length > 1
-    ) {
-      setError(
-        "A START csomagban csak 1 kép használható."
-      );
+    if (images.reduce((sum, image) => sum + image.dataUrl.length, 0) > 3_600_000) {
+      setError("A képek összmérete túl nagy. Tölts fel kevesebbet.");
       return;
     }
-
-    if (
-      (selectedPackage.id === "PRO" ||
-        selectedPackage.id === "PREMIUM") &&
-      images.length > 8
-    ) {
-      setError("Maximum 8 kép használható.");
-      return;
-    }
-
     setLoading(true);
     setError("");
     setAnalysis(null);
-
     try {
       const response = await fetch("/api/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          images,
-          image: images[0],
-          prompt,
-          package: selectedPackage.id,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, images: images.map((img) => img.dataUrl), field, accessCode }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(
-          data.error || "Az elemzés sikertelen."
-        );
-      }
-
-      setAnalysis(data.analysis);
+      const payload = await response.json() as { success?: boolean; analysis?: Analysis; error?: string };
+      if (!response.ok || !payload.success || !payload.analysis) throw new Error(payload.error || "Az elemzés sikertelen.");
+      setAnalysis(payload.analysis);
+      setReportTime(new Date().toLocaleString("hu-HU"));
+      setActiveImage(0);
+      setTimeout(() => document.getElementById("jelentes")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Ismeretlen hiba történt."
-      );
+      setError(err instanceof Error ? err.message : "Nem sikerült elvégezni az elemzést.");
     } finally {
       setLoading(false);
     }
   }
-
-  function removeImage(index: number) {
-    setImages((current) =>
-      current.filter((_, i) => i !== index)
-    );
-
-    setFileNames((current) =>
-      current.filter((_, i) => i !== index)
-    );
-
-    setAnalysis(null);
-    setError("");
+  function saveReport() {
+    if (analysis) window.print();
+  }
+  function saveJSON() {
+    if (!analysis) return;
+    const content = JSON.stringify({ product: "AGRI DRONE VISION", generatedAt: reportTime, plan: selectedPlan.name, field, analysis }, null, 2);
+    const url = URL.createObjectURL(new Blob([content], { type: "application/json;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "agri-drone-vision-jelentes.json";
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
-  if (!selectedPackage) {
-    return (
-      <PackageSelector
-        packages={PACKAGES}
-        onSelect={selectPackage}
-      />
-    );
-  }
-
-  const maxImages =
-    selectedPackage.id === "START" ? 1 : 8;
-
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <div className="mx-auto max-w-[1500px] px-6 py-8">
-        <header className="mb-8 flex flex-col justify-between gap-5 md:flex-row md:items-center">
-          <div className="flex items-center gap-4">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center">
-              <img
-                src="/ai-drone-vision.png"
-                alt="AI Drone Vision"
-                className="h-16 w-16 object-contain"
-              />
-            </div>
-
-            <div>
-              <h1 className="text-3xl font-black">
-                AI Drone Vision
-              </h1>
-
-              <p className="text-sm text-slate-400">
-                AI ingatlanfelmérés és felújítás-tervezés
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-black text-blue-400">
-              {selectedPackage.name}
-            </span>
-
-            {selectedPackage.versions.map((version) => (
-              <span
-                key={version}
-                className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-400"
-              >
-                {version}
-              </span>
-            ))}
-
-            <button
-              onClick={changePackage}
-              className="rounded-lg border border-slate-800 px-3 py-2 text-xs font-bold text-slate-500 transition hover:border-blue-500 hover:text-blue-400"
-            >
-              Csomagváltás
-            </button>
-          </div>
-        </header>
-
-        <div className="mb-6 rounded-2xl border border-blue-900/30 bg-blue-950/10 p-4">
-          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-blue-400">
-                Aktív csomag
-              </p>
-
-              <p className="mt-1 text-lg font-black">
-                {selectedPackage.name}
-              </p>
-
-              <p className="text-sm text-slate-500">
-                {selectedPackage.description}
-              </p>
-            </div>
-
-            <div className="text-left md:text-right">
-              <p className="text-2xl font-black">
-                {selectedPackage.price}
-              </p>
-
-              <p className="text-xs text-slate-500">
-                Demó mód · fizetés nincs bekötve
-              </p>
-            </div>
-          </div>
+    <div className="agri-grid glow min-h-screen">
+      <header className="no-print sticky top-0 z-30 border-b border-[#203c2c] bg-[#09150e]/95 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-[1450px] items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <a href="#fooldal" className="flex items-center gap-3" aria-label="AGRI DRONE VISION kezdőlap">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-lime-300/30 bg-lime-300/10 text-2xl text-lime-300">✥</div>
+            <div className="leading-tight"><p className="text-sm font-black tracking-[.13em] text-white sm:text-base">AGRI <span className="text-lime-300">DRONE</span> VISION</p><p className="mt-1 text-[9px] font-bold uppercase tracking-[.24em] text-[#8fae9a]">Agricultural Intelligence</p></div>
+          </a>
+          <div className="flex items-center gap-2 sm:gap-5"><span className="hidden text-xs text-[#8cae97] md:block">DJI Mini 3 · RGB-kompatibilis</span><a href="#felmeres" className="rounded-xl border border-lime-300/20 bg-lime-300 px-4 py-2.5 text-xs font-black text-[#112418] transition hover:bg-lime-200">Felmérés indítása →</a></div>
         </div>
-
-        <div className="grid gap-6 xl:grid-cols-[430px_1fr]">
-          {/* INPUT */}
-
-          <section className="h-fit rounded-3xl border border-slate-800 bg-slate-900 p-6">
-            <h2 className="text-xl font-bold">
-              Ingatlan elemzése
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              {selectedPackage.id === "START"
-                ? "Tölts fel egy ingatlanfotót vagy drónfelvételt."
-                : "Tölts fel legfeljebb 8 ingatlanfotót vagy egy többképes kollázst."}
-            </p>
-
-            {images.length === 0 ? (
-              <label className="mt-6 flex min-h-[280px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-700 bg-slate-950 p-6 text-center transition hover:border-blue-500">
-                <div className="text-6xl">
-                  📷
-                </div>
-
-                <p className="mt-4 font-bold">
-                  {selectedPackage.id === "START"
-                    ? "Kép feltöltése"
-                    : "Képek feltöltése"}
-                </p>
-
-                <p className="mt-2 text-xs text-slate-500">
-                  JPG · PNG · WEBP · max. 20 MB / kép
-                </p>
-
-                {selectedPackage.id !== "START" && (
-                  <p className="mt-1 text-xs font-bold text-blue-400">
-                    Maximum 8 kép
-                  </p>
-                )}
-
-                <span className="mt-5 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold transition hover:bg-blue-500">
-                  Fájl kiválasztása
-                </span>
-
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple={selectedPackage.id !== "START"}
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-              </label>
-            ) : (
-              <div className="mt-6">
-                <div className="grid grid-cols-2 gap-3">
-                  {images.map((img, index) => (
-                    <div
-                      key={`${fileNames[index]}-${index}`}
-                      className="relative overflow-hidden rounded-2xl border border-slate-700 bg-black"
-                    >
-                      <img
-                        src={img}
-                        alt={`Feltöltött ingatlan ${index + 1}`}
-                        className="h-40 w-full object-cover"
-                      />
-
-                      <div className="absolute left-2 top-2 rounded-lg bg-black/80 px-2 py-1 text-[10px] font-bold text-white">
-                        {index + 1}/{images.length}
-                      </div>
-
-                      <button
-                        onClick={() => removeImage(index)}
-                        disabled={loading}
-                        className="absolute right-2 top-2 rounded-lg bg-red-600/90 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-red-500 disabled:opacity-40"
-                      >
-                        Törlés
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {images.length < maxImages &&
-                  selectedPackage.id !== "START" && (
-                    <label className="mt-3 flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-700 bg-slate-950 px-4 py-3 text-xs font-bold text-slate-400 transition hover:border-blue-500 hover:text-blue-400">
-                      + További kép hozzáadása
-
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={(event) => {
-                          const files = Array.from(
-                            event.target.files || []
-                          );
-
-                          if (!files.length) return;
-
-                          const remaining =
-                            maxImages - images.length;
-
-                          if (files.length > remaining) {
-                            setError(
-                              `Még csak ${remaining} kép tölthető fel.`
-                            );
-                            event.target.value = "";
-                            return;
-                          }
-
-                          const fakeEvent = {
-                            target: event.target,
-                          } as ChangeEvent<HTMLInputElement>;
-
-                          handleImageUpload(fakeEvent);
-                        }}
-                        className="hidden"
-                      />
-                    </label>
-                  )}
-
-                <div className="mt-3 rounded-xl bg-slate-950 p-3">
-                  <p className="text-xs text-slate-400">
-                    {images.length} / {maxImages} kép feltöltve
-                  </p>
-
-                  <div className="mt-2 space-y-1">
-                    {fileNames.map((name, index) => (
-                      <p
-                        key={`${name}-${index}`}
-                        className="truncate text-[11px] text-slate-600"
-                      >
-                        {index + 1}. {name}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-6">
-              <label className="mb-2 block text-sm font-semibold">
-                Megjegyzés az AI-nak
-              </label>
-
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={4}
-                placeholder="Pl. Különösen vizsgáld meg a tetőt és a homlokzatot."
-                className="w-full resize-none rounded-xl border border-slate-700 bg-slate-950 p-4 text-sm outline-none transition focus:border-blue-500"
-              />
-            </div>
-
-            <button
-              onClick={analyzeImage}
-              disabled={!images.length || loading}
-              className="mt-5 w-full rounded-xl bg-blue-600 px-5 py-4 font-bold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-700"
-            >
-              {loading
-                ? "🔄 AI elemzés folyamatban..."
-                : `🔍 ${selectedPackage.name} ELEMZÉS`}
-            </button>
-
-            {error && (
-              <div className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-sm text-red-300">
-                {error}
-              </div>
-            )}
-          </section>
-
-          {/* RESULTS */}
-
-          <section className="space-y-6">
-            {!analysis && !loading && (
-              <EmptyScreen
-                selectedPackage={selectedPackage}
-              />
-            )}
-
-            {loading && (
-              <LoadingScreen
-                selectedPackage={selectedPackage}
-              />
-            )}
-
-            {analysis && !loading && (
-              <>
-                <StatusCard
-                  selectedPackage={selectedPackage}
-                />
-
-                {selectedPackage.versions.includes("V2") &&
-                  analysis.v2 && (
-                    <Panel
-                      title="V2 · Hibafelismerés"
-                      color="red"
-                      badge={`${analysis.v2.totalErrors ?? 0} hiba`}
-                    >
-                      {(analysis.v2.errors ?? []).length === 0 ? (
-                        <Empty text="Nem található látható hiba." />
-                      ) : (
-                        <div className="space-y-3">
-                          {(analysis.v2.errors ?? []).map(
-                            (item) => (
-                              <div
-                                key={item.id}
-                                className="rounded-xl border border-slate-800 bg-slate-950 p-4"
-                              >
-                                <div className="flex justify-between gap-4">
-                                  <div>
-                                    <h3 className="font-bold">
-                                      {item.category}
-                                    </h3>
-
-                                    <p className="text-xs text-slate-500">
-                                      {item.location}
-                                    </p>
-                                  </div>
-
-                                  <span className="text-xs font-bold text-red-400">
-                                    {item.severity}
-                                  </span>
-                                </div>
-
-                                <p className="mt-3 text-sm text-slate-300">
-                                  {item.observation}
-                                </p>
-
-                                <p className="mt-2 text-sm text-blue-400">
-                                  Javaslat: {item.recommendation}
-                                </p>
-
-                                <p className="mt-2 text-xs text-slate-600">
-                                  Biztosság:{" "}
-                                  {Math.round(
-                                    (item.confidence ?? 0) * 100
-                                  )}
-                                  %
-                                </p>
-                              </div>
-                            )
-                          )}
-                        </div>
-                      )}
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V3") &&
-                  analysis.v3 && (
-                    <Panel
-                      title="V3 · Mérési becslés"
-                      color="blue"
-                    >
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <Stat
-                          label="Összterület"
-                          value={analysis.v3.estimatedArea}
-                        />
-
-                        <Stat
-                          label="Fal terület"
-                          value={analysis.v3.estimatedWallArea}
-                        />
-
-                        <Stat
-                          label="Padló"
-                          value={analysis.v3.estimatedFloorArea}
-                        />
-
-                        <Stat
-                          label="Tető"
-                          value={analysis.v3.estimatedRoofArea}
-                        />
-
-                        <Stat
-                          label="Látható ablakok"
-                          value={String(
-                            analysis.v3.visibleWindows ?? 0
-                          )}
-                        />
-
-                        <Stat
-                          label="Látható ajtók"
-                          value={String(
-                            analysis.v3.visibleDoors ?? 0
-                          )}
-                        />
-
-                        <Stat
-                          label="Mérési biztosság"
-                          value={`${Math.round(
-                            analysis.v3.measurementConfidence ?? 0
-                          )}%`}
-                        />
-                      </div>
-
-                      <p className="mt-4 text-sm text-slate-500">
-                        {analysis.v3.note ||
-                          "A méretek vizuális becslések."}
-                      </p>
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V4") &&
-                  analysis.v4 && (
-                    <Panel
-                      title="V4 · Állapotértékelés"
-                      color="yellow"
-                      badge={`${analysis.v4.conditionScore ?? 0}/100`}
-                    >
-                      <div className="grid gap-5 md:grid-cols-[120px_1fr]">
-                        <div className="flex h-28 w-28 items-center justify-center rounded-full border-4 border-yellow-500 text-3xl font-black text-yellow-400">
-                          {analysis.v4.conditionScore ?? 0}
-                        </div>
-
-                        <div>
-                          <h3 className="text-xl font-bold">
-                            {analysis.v4.condition ||
-                              "Nem meghatározható"}
-                          </h3>
-
-                          <p className="mt-2 text-sm leading-6 text-slate-400">
-                            {analysis.v4.explanation ||
-                              "Nincs részletes magyarázat."}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid grid-cols-4 gap-2 text-center">
-                        <MiniStat
-                          label="Kritikus"
-                          value={analysis.v4.criticalErrors ?? 0}
-                        />
-
-                        <MiniStat
-                          label="Magas"
-                          value={analysis.v4.highErrors ?? 0}
-                        />
-
-                        <MiniStat
-                          label="Közepes"
-                          value={analysis.v4.mediumErrors ?? 0}
-                        />
-
-                        <MiniStat
-                          label="Alacsony"
-                          value={analysis.v4.lowErrors ?? 0}
-                        />
-                      </div>
-
-                      <div className="mt-5 rounded-xl bg-slate-950 p-4">
-                        <p className="text-xs text-slate-500">
-                          Becsült költség
-                        </p>
-
-                        <p className="mt-1 text-xl font-bold text-yellow-400">
-                          {analysis.v4.estimatedCostRange ||
-                            "Nem meghatározható"}
-                        </p>
-                      </div>
-
-                      <div className="mt-5 space-y-2">
-                        {(analysis.v4.renovationPriorities ?? []).map(
-                          (item) => (
-                            <div
-                              key={item.priority}
-                              className="rounded-xl bg-slate-950 p-4"
-                            >
-                              <div className="flex gap-3">
-                                <span className="font-black text-yellow-400">
-                                  #{item.priority}
-                                </span>
-
-                                <div>
-                                  <p className="font-bold">
-                                    {item.work}
-                                  </p>
-
-                                  <p className="mt-1 text-sm text-slate-500">
-                                    {item.reason}
-                                  </p>
-
-                                  <p className="mt-2 text-xs text-yellow-500">
-                                    {item.urgency}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V5") &&
-                  analysis.v5 && (
-                    <Panel
-                      title="V5 · Vizuális hibajelölés"
-                      color="purple"
-                      badge={`${(analysis.v5.markers ?? []).length} marker`}
-                    >
-                      <div className="mb-4 rounded-xl bg-purple-950/30 p-4 text-sm text-purple-300">
-                        A piros keretek az AI által felismert problémás területeket jelölik.
-                      </div>
-
-                      <div className="space-y-6">
-                        {images.map((img, imageIndex) => (
-                          <div
-                            key={imageIndex}
-                            className="relative overflow-hidden rounded-2xl border border-slate-700 bg-black"
-                          >
-                            <img
-                              src={img}
-                              alt={`AI vizuális elemzés ${imageIndex + 1}`}
-                              className="block h-auto w-full"
-                            />
-
-                            {imageIndex === 0 &&
-                              (() => {
-                                /*
-                                 * JAVÍTÁS:
-                                 * Az analysis.v5 lehet undefined a TypeScript szerint.
-                                 * Ezért a markereket előbb biztonságosan kivesszük.
-                                 */
-                                const markers =
-                                  analysis.v5?.markers ?? [];
-
-                                return markers.map(
-                                  (marker) => {
-                                    const x = clamp(
-                                      marker.x,
-                                      0,
-                                      100
-                                    );
-
-                                    const y = clamp(
-                                      marker.y,
-                                      0,
-                                      100
-                                    );
-
-                                    const width = clamp(
-                                      marker.width,
-                                      0.5,
-                                      Math.max(
-                                        0.5,
-                                        100 - x
-                                      )
-                                    );
-
-                                    const height = clamp(
-                                      marker.height,
-                                      0.5,
-                                      Math.max(
-                                        0.5,
-                                        100 - y
-                                      )
-                                    );
-
-                                    return (
-                                      <div
-                                        key={marker.id}
-                                        className="absolute"
-                                        style={{
-                                          left: `${x}%`,
-                                          top: `${y}%`,
-                                          width: `${width}%`,
-                                          height: `${height}%`,
-                                        }}
-                                      >
-                                        <div className="absolute inset-0 rounded-md border-2 border-red-500 bg-red-500/10" />
-
-                                        <div className="absolute left-0 top-0 z-10 -translate-y-full whitespace-nowrap rounded-md bg-red-600 px-2 py-1 text-[11px] font-bold text-white">
-                                          #{marker.id}{" "}
-                                          {marker.label}
-                                        </div>
-
-                                        <div className="absolute bottom-0 right-0 z-10 rounded-tl-md bg-black/80 px-2 py-1 text-[9px] text-white">
-                                          {Math.round(
-                                            (marker.confidence ?? 0) *
-                                              100
-                                          )}
-                                          %
-                                        </div>
-                                      </div>
-                                    );
-                                  }
-                                );
-                              })()}
-                          </div>
-                        ))}
-                      </div>
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V6") &&
-                  analysis.v6 && (
-                    <Panel
-                      title="V6 · Felújítási terv"
-                      color="cyan"
-                    >
-                      <p className="leading-7 text-slate-300">
-                        {analysis.v6.projectSummary ||
-                          "Nincs összefoglaló."}
-                      </p>
-
-                      <div className="mt-5 grid gap-3 md:grid-cols-3">
-                        <Stat
-                          label="Prioritás"
-                          value={analysis.v6.overallPriority}
-                        />
-
-                        <Stat
-                          label="Teljes költség"
-                          value={analysis.v6.totalEstimatedCost}
-                        />
-
-                        <Stat
-                          label="Időtartam"
-                          value={analysis.v6.estimatedDuration}
-                        />
-                      </div>
-
-                      <div className="mt-6 space-y-4">
-                        {(analysis.v6.phases ?? []).map(
-                          (phase) => (
-                            <div
-                              key={phase.phase}
-                              className="rounded-2xl border border-slate-800 bg-slate-950 p-5"
-                            >
-                              <div className="flex flex-col justify-between gap-3 md:flex-row">
-                                <div>
-                                  <p className="text-xs font-bold text-cyan-400">
-                                    FÁZIS {phase.phase}
-                                  </p>
-
-                                  <h3 className="mt-1 text-lg font-bold">
-                                    {phase.name}
-                                  </h3>
-
-                                  <p className="mt-2 text-sm text-slate-400">
-                                    {phase.description}
-                                  </p>
-                                </div>
-
-                                <div className="text-left md:text-right">
-                                  <p className="font-bold text-cyan-400">
-                                    {phase.estimatedCost}
-                                  </p>
-
-                                  <p className="text-xs text-slate-500">
-                                    {phase.estimatedDuration}
-                                  </p>
-                                </div>
-                              </div>
-
-                              <div className="mt-4 space-y-2">
-                                {(phase.tasks ?? []).map(
-                                  (task, index) => (
-                                    <div
-                                      key={index}
-                                      className="rounded-xl bg-slate-900 p-4"
-                                    >
-                                      <p className="font-semibold">
-                                        {task.task}
-                                      </p>
-
-                                      <p className="mt-1 text-sm text-slate-500">
-                                        {task.reason}
-                                      </p>
-
-                                      <div className="mt-3 grid gap-2 text-xs text-slate-400 md:grid-cols-4">
-                                        <span>
-                                          Anyag:{" "}
-                                          {task.material}
-                                        </span>
-
-                                        <span>
-                                          Mennyiség:{" "}
-                                          {task.quantity}
-                                        </span>
-
-                                        <span>
-                                          Anyagköltség:{" "}
-                                          {task.materialCost}
-                                        </span>
-
-                                        <span>
-                                          Munkadíj:{" "}
-                                          {task.laborCost}
-                                        </span>
-                                      </div>
-
-                                      <p className="mt-2 text-xs text-cyan-500">
-                                        Idő:{" "}
-                                        {task.duration}
-                                      </p>
-                                    </div>
-                                  )
-                                )}
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-
-                      <div className="mt-6">
-                        <h3 className="mb-3 font-bold">
-                          Anyaglista
-                        </h3>
-
-                        <div className="space-y-2">
-                          {(analysis.v6.materials ?? []).map(
-                            (material, index) => (
-                              <div
-                                key={index}
-                                className="grid gap-2 rounded-xl bg-slate-950 p-4 md:grid-cols-4"
-                              >
-                                <span className="font-semibold">
-                                  {material.material}
-                                </span>
-
-                                <span className="text-slate-400">
-                                  {material.quantity}
-                                </span>
-
-                                <span className="text-cyan-400">
-                                  {material.estimatedCost}
-                                </span>
-
-                                <span className="text-slate-500">
-                                  {material.purpose}
-                                </span>
-                              </div>
-                            )
-                          )}
-                        </div>
-                      </div>
-
-                      {(analysis.v6.warnings ?? []).length > 0 && (
-                        <div className="mt-5 rounded-xl border border-yellow-900/40 bg-yellow-950/20 p-4">
-                          <p className="font-bold text-yellow-400">
-                            Figyelmeztetések
-                          </p>
-
-                          <ul className="mt-3 space-y-2 text-sm text-slate-400">
-                            {(analysis.v6.warnings ?? []).map(
-                              (warning, index) => (
-                                <li key={index}>
-                                  ⚠ {warning}
-                                </li>
-                              )
-                            )}
-                          </ul>
-                        </div>
-                      )}
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V7") &&
-                  analysis.v7 && (
-                    <Panel
-                      title="V7 · Ingatlan intelligencia"
-                      color="pink"
-                    >
-                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                        <Stat
-                          label="Ingatlantípus"
-                          value={analysis.v7.propertyType}
-                        />
-
-                        <Stat
-                          label="Építészeti stílus"
-                          value={
-                            analysis.v7.architecturalStyle
-                          }
-                        />
-
-                        <Stat
-                          label="Becsült helyiségek"
-                          value={String(
-                            analysis.v7.estimatedRooms ?? 0
-                          )}
-                        />
-
-                        <Stat
-                          label="Felújítási potenciál"
-                          value={
-                            analysis.v7.renovationPotential
-                          }
-                        />
-                      </div>
-
-                      <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                        <Condition
-                          label="Külső"
-                          value={
-                            analysis.v7.exteriorCondition
-                          }
-                        />
-
-                        <Condition
-                          label="Belső"
-                          value={
-                            analysis.v7.interiorCondition
-                          }
-                        />
-
-                        <Condition
-                          label="Tető"
-                          value={analysis.v7.roofCondition}
-                        />
-
-                        <Condition
-                          label="Homlokzat"
-                          value={
-                            analysis.v7.facadeCondition
-                          }
-                        />
-                      </div>
-
-                      <div className="mt-6">
-                        <h3 className="font-bold">
-                          Felismert jellemzők
-                        </h3>
-
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {(
-                            analysis.v7.detectedFeatures ?? []
-                          ).map((feature, index) => (
-                            <span
-                              key={index}
-                              className="rounded-lg bg-pink-600/10 px-3 py-2 text-xs text-pink-300"
-                            >
-                              {feature}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="mt-6 rounded-xl bg-slate-950 p-5">
-                        <h3 className="font-bold">
-                          Javasolt következő lépések
-                        </h3>
-
-                        <ul className="mt-3 space-y-2 text-sm text-slate-400">
-                          {(
-                            analysis.v7
-                              .recommendedActions ?? []
-                          ).map((action, index) => (
-                            <li key={index}>
-                              ✓ {action}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </Panel>
-                  )}
-
-                {selectedPackage.versions.includes("V8") &&
-                  analysis.v8 && (
-                    <Panel
-                      title="V8 · Befektetési elemzés"
-                      color="emerald"
-                      badge={`${analysis.v8.investmentScore ?? 0}/100`}
-                    >
-                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                        <Stat
-                          label="Befektetési pontszám"
-                          value={`${analysis.v8.investmentScore ?? 0}/100`}
-                        />
-
-                        <Stat
-                          label="Becsült befektetés"
-                          value={
-                            analysis.v8.estimatedInvestment
-                          }
-                        />
-
-                        <Stat
-                          label="Felújítás utáni érték"
-                          value={
-                            analysis.v8
-                              .estimatedAfterRenovationValue
-                          }
-                        />
-
-                        <Stat
-                          label="ROI"
-                          value={analysis.v8.roi}
-                        />
-                      </div>
-
-                      <div className="mt-5 rounded-2xl border border-emerald-900/40 bg-emerald-950/20 p-5">
-                        <p className="text-xs font-bold uppercase text-emerald-400">
-                          AI befektetési ajánlás
-                        </p>
-
-                        <h3 className="mt-2 text-xl font-bold">
-                          {analysis.v8.recommendation ||
-                            "Nem meghatározható"}
-                        </h3>
-
-                        <p className="mt-3 text-sm leading-6 text-slate-300">
-                          {analysis.v8.investorSummary ||
-                            "Nincs befektetői összefoglaló."}
-                        </p>
-                      </div>
-
-                      <div className="mt-5 grid gap-5 md:grid-cols-2">
-                        <div className="rounded-xl bg-slate-950 p-5">
-                          <h3 className="font-bold text-emerald-400">
-                            Lehetőségek
-                          </h3>
-
-                          <ul className="mt-3 space-y-2 text-sm text-slate-400">
-                            {(
-                              analysis.v8
-                                .opportunities ?? []
-                            ).map((item, index) => (
-                              <li key={index}>
-                                ✓ {item}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="rounded-xl bg-slate-950 p-5">
-                          <h3 className="font-bold text-red-400">
-                            Kockázatok
-                          </h3>
-
-                          <ul className="mt-3 space-y-2 text-sm text-slate-400">
-                            {(analysis.v8.risks ?? []).map(
-                              (item, index) => (
-                                <li key={index}>
-                                  ⚠ {item}
-                                </li>
-                              )
-                            )}
-                          </ul>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid gap-3 md:grid-cols-3">
-                        <Stat
-                          label="Felújítási érték"
-                          value={
-                            analysis.v8.renovationValue
-                          }
-                        />
-
-                        <Stat
-                          label="Várható hozam"
-                          value={
-                            analysis.v8.estimatedReturn
-                          }
-                        />
-
-                        <Stat
-                          label="Megtérülés"
-                          value={analysis.v8.roi}
-                        />
-                      </div>
-                    </Panel>
-                  )}
-              </>
-            )}
-          </section>
-        </div>
-
-        <footer className="mt-10 border-t border-slate-900 pt-6 text-center text-xs text-slate-600">
-          AI Drone Vision Engine · {selectedPackage.name} ·{" "}
-          {selectedPackage.versions.join(" · ")}
-        </footer>
-      </div>
-    </main>
-  );
-}
-
-function PackageSelector({
-  packages,
-  onSelect,
-}: {
-  packages: PackageConfig[];
-  onSelect: (packageConfig: PackageConfig) => void;
-}) {
-  return (
-    <main className="min-h-screen overflow-hidden bg-slate-950 text-white">
-      <div className="relative mx-auto flex min-h-screen max-w-5xl flex-col items-center justify-center px-5 py-10">
-        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-600/10 blur-[140px]" />
-
-        <div className="relative z-10 mb-10 text-center">
-          <div className="flex justify-center">
-            <img
-              src="/ai-drone-vision.png"
-              alt="AI Drone Vision"
-              className="h-32 w-32 object-contain"
-            />
+      </header>
+
+      <main id="fooldal" className="mx-auto max-w-[1450px] px-5 pb-20 sm:px-8">
+        <section className="intro-section relative overflow-hidden py-12 lg:py-20">
+          <div className="relative z-10 max-w-4xl">
+            <div className="mb-6 flex flex-wrap items-center gap-2"><Pill>MEZŐGAZDASÁGI DRÓNFELMÉRÉS</Pill><Pill>AI KÉPELEMZÉS</Pill><Pill>MAGYAR NYELVEN</Pill></div>
+            <h1 className="text-[2.5rem] font-black leading-[1.07] tracking-tight text-white sm:text-6xl lg:text-7xl">Lásd a földedet <span className="text-lime-300">más szemszögből.</span></h1>
+            <p className="agri-muted mt-7 max-w-2xl text-base leading-8 sm:text-lg">Drónfotókból készült intelligens vizuális helyszínellenőrzés. Látható eltérések, vadkárra vagy belvízre utaló jelek, veszélyforrások és a következő teendők — egy áttekinthető jelentésben.</p>
+            <div className="mt-8 flex flex-wrap items-center gap-3"><a href="#felmeres" className="rounded-xl bg-lime-300 px-6 py-3.5 text-sm font-black text-[#112418] hover:bg-lime-200">Saját terület elemzése ↗</a><span className="text-xs text-[#83a891]">Nincs automatikus fizetés · Árak tájékoztató jellegűek</span></div>
           </div>
+          <div className="pointer-events-none absolute -right-20 -top-20 h-96 w-96 rounded-full border border-lime-300/10 bg-lime-300/5 blur-3xl" />
+        </section>
 
-          <h1 className="mt-4 text-4xl font-black tracking-tight md:text-6xl">
-            AI Drone Vision
-          </h1>
-
-          <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-slate-400 md:text-base">
-            Válaszd ki a számodra megfelelő AI ingatlan-elemzési
-            csomagot.
-          </p>
-        </div>
-
-        <div className="relative z-10 w-full space-y-4">
-          {packages.map((pkg) => (
-            <button
-              key={pkg.id}
-              onClick={() => onSelect(pkg)}
-              className="group relative w-full overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-left transition-all duration-300 hover:-translate-y-1 hover:border-blue-500/60 hover:shadow-2xl hover:shadow-blue-950/30"
-            >
-              <div
-                className="absolute inset-0 bg-cover bg-center opacity-20 transition duration-500 group-hover:scale-105 group-hover:opacity-30"
-                style={{
-                  backgroundImage: `url(${pkg.image})`,
-                }}
-              />
-
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/90 to-slate-950/50" />
-
-              <div className="relative flex w-full items-center gap-4 p-5 md:gap-6 md:p-6">
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/80 text-2xl font-black text-blue-400">
-                  {pkg.id === "START" && "S"}
-                  {pkg.id === "PRO" && "P"}
-                  {pkg.id === "PREMIUM" && "★"}
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-xl font-black md:text-2xl">
-                      {pkg.name}
-                    </h2>
-
-                    {pkg.badge && (
-                      <span className="rounded-full bg-blue-600 px-2.5 py-1 text-[9px] font-black tracking-wider text-white">
-                        {pkg.badge}
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="mt-1 text-sm text-slate-400">
-                    {pkg.description}
-                  </p>
-
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {pkg.versions.map((version) => (
-                      <span
-                        key={version}
-                        className="rounded-md border border-slate-700 bg-slate-950/70 px-2 py-1 text-[10px] font-bold text-slate-400"
-                      >
-                        {version}
-                      </span>
-                    ))}
-                  </div>
-
-                  {pkg.id !== "START" && (
-                    <p className="mt-2 text-[11px] font-bold text-blue-400">
-                      📸 Akár 8 kép
-                    </p>
-                  )}
-                </div>
-
-                <div className="shrink-0 text-right">
-                  <p className="text-xl font-black text-white md:text-2xl">
-                    {pkg.price}
-                  </p>
-
-                  <p className="mt-1 text-xs font-bold text-blue-400 opacity-0 transition group-hover:opacity-100">
-                    KIVÁLASZTÁS →
-                  </p>
-                </div>
-              </div>
-            </button>
+        <section className="intro-section mb-12 grid gap-3 md:grid-cols-4">
+          {[
+            ["01", "Növényzet", "Foltosság, elszíneződés, állománykülönbségek"],
+            ["02", "Vadkárgyanú", "Taposás, hiányos növénysávok látható jelei"],
+            ["03", "Víz és talaj", "Pangóvíz, lefolyás, erózióra utaló minták"],
+            ["04", "Veszélyforrás", "Akadályok, veszélyesnek tűnő fák, járhatóság"],
+          ].map(([number, title, desc]) => (
+            <div key={number} className="agri-panel p-5"><p className="mb-4 text-xs font-black tracking-[.25em] text-lime-300">{number} / VIZSGÁLAT</p><h3 className="text-lg font-black text-white">{title}</h3><p className="agri-muted mt-2 text-xs leading-6">{desc}</p></div>
           ))}
+        </section>
+
+        <section className="intro-section mb-12" aria-label="Csomagok">
+          <SmallTitle overline="Választható szolgáltatás" title="Ellenőrzési módok" description="Válaszd ki a felmérés céljához illő csomagot. 50 hektár felett egyedi helyszíni ajánlat javasolt." />
+          <div className="grid gap-4 lg:grid-cols-3">
+            {PLANS.map((item) => <button key={item.id} type="button" onClick={() => changePlan(item.id)} aria-pressed={plan === item.id} className={`rounded-[22px] border p-6 text-left transition ${plan === item.id ? "border-lime-300 bg-[#203b28] shadow-[0_0_0_1px_rgba(190,242,100,.2)]" : "border-[#294536] bg-[#0f2017] hover:border-[#557f5a]"}`}>
+              <div className="mb-5 flex items-center justify-between"><span className="text-[10px] font-black tracking-[.2em] text-lime-300">{item.tag}</span><span className={`flex h-5 w-5 items-center justify-center rounded-full border ${plan === item.id ? "border-lime-300 bg-lime-300 text-[#112418]" : "border-[#51725a]"}`}>{plan === item.id ? "✓" : ""}</span></div>
+              <h3 className="text-xl font-black text-white">{item.name}</h3><p className="mt-2 min-h-12 text-sm leading-6 text-[#9fbaaa]">{item.description}</p><p className="mt-5 text-2xl font-black text-lime-300">{item.price}</p>
+              <div className="mt-5 space-y-2 border-t border-[#365841] pt-4">{item.features.map((feature) => <p key={feature} className="flex items-start gap-2 text-xs text-[#bed1c2]"><span className="font-black text-lime-300">✓</span>{feature}</p>)}</div>
+            </button>)}
+          </div>
+        </section>
+
+        <div id="felmeres" className="grid scroll-mt-24 gap-6 xl:grid-cols-[460px_minmax(0,1fr)]">
+          <section className="input-section agri-panel h-fit p-6 sm:p-7">
+            <SmallTitle overline="Új vizsgálat" title="Területi adatlap" description="A megadott információk segítik a képek értelmezését. Nem helyettesítik a helyszíni mérést." />
+            <div className="mb-6 flex items-center justify-between rounded-xl border border-lime-300/20 bg-lime-300/10 p-4"><div><p className="text-[10px] font-bold uppercase tracking-wide text-lime-300">Aktív elemzés</p><p className="mt-1 text-sm font-black text-white">{selectedPlan.name}</p></div><span className="text-xs font-bold text-lime-300">{selectedPlan.maxImages} fotó max.</span></div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2"><label className="agri-label" htmlFor="client">Megrendelő / gazdaság</label><input id="client" className="agri-input" value={field.client} onChange={(e) => updateField("client", e.target.value)} placeholder="Pl. Kovács családi gazdaság" /></div>
+              <div><label className="agri-label" htmlFor="fieldName">Tábla / terület neve</label><input id="fieldName" className="agri-input" value={field.fieldName} onChange={(e) => updateField("fieldName", e.target.value)} placeholder="Pl. Nyugati tábla" /></div>
+              <div><label className="agri-label" htmlFor="location">Település / körzet</label><input id="location" className="agri-input" value={field.location} onChange={(e) => updateField("location", e.target.value)} placeholder="Pl. Győr környéke" /></div>
+              <div><label className="agri-label" htmlFor="hectares">Terület (ha), ha ismert</label><input id="hectares" className="agri-input" value={field.hectares} onChange={(e) => updateField("hectares", e.target.value)} inputMode="decimal" placeholder="Pl. 12,5" /></div>
+              <div><label className="agri-label" htmlFor="crop">Kultúra / hasznosítás</label><input id="crop" className="agri-input" value={field.crop} onChange={(e) => updateField("crop", e.target.value)} placeholder="Pl. kukorica, legelő" /></div>
+              <div className="sm:col-span-2"><label className="agri-label" htmlFor="inspectedAt">Felvétel dátuma (ha ismert)</label><input id="inspectedAt" type="date" className="agri-input" value={field.inspectedAt} onChange={(e) => updateField("inspectedAt", e.target.value)} /></div>
+              <div className="sm:col-span-2"><label className="agri-label" htmlFor="notes">Mire figyeljen az AI?</label><textarea id="notes" rows={4} maxLength={1200} className="agri-input resize-y" value={field.notes} onChange={(e) => updateField("notes", e.target.value)} placeholder="Pl. A keleti szélén vadkárra gyanakszom. A déli sarok vizesedhet." /></div>
+            </div>
+
+            <div className="mt-8"><div className="mb-3 flex items-center justify-between"><label className="agri-label !mb-0">Drónfotók feltöltése</label><span className="text-xs font-bold text-lime-300">{images.length} / {selectedPlan.maxImages}</span></div>
+              <label className={`flex min-h-44 flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition ${uploading || loading ? "cursor-wait border-[#264530] bg-[#122419]" : "cursor-pointer border-[#467c55] bg-[#11271a] hover:border-lime-300"}`}>
+                <span className="mb-3 text-4xl">↥</span><span className="text-sm font-black text-white">{uploading ? "Képek előkészítése…" : "Kattints a fotók kiválasztásához"}</span><span className="mt-2 max-w-xs text-xs leading-5 text-[#91ad9a]">JPG · PNG · WEBP · képenként 16 MB-ig. A képeket feltöltés előtt tömörítjük.</span>
+                <input type="file" className="hidden" accept="image/jpeg,image/png,image/webp" multiple disabled={uploading || loading || images.length >= selectedPlan.maxImages} onChange={handleUpload} />
+              </label>
+              {images.length > 0 && <div className="mt-3 grid grid-cols-3 gap-2">{images.map((img, index) => <div className="group relative overflow-hidden rounded-xl border border-[#3b6347]" key={`${img.name}-${index}`}><img src={img.dataUrl} alt={`Drónfotó ${index + 1}`} className="h-24 w-full object-cover" /><div className="absolute bottom-0 left-0 right-0 bg-black/60 p-1 text-center text-[10px] font-bold text-white">{index + 1}. kép</div><button aria-label={`${index + 1}. kép eltávolítása`} type="button" disabled={loading} onClick={() => removeImage(index)} className="absolute right-1 top-1 rounded-md bg-red-700 px-2 py-0.5 text-xs font-black text-white">×</button></div>)}</div>}
+            </div>
+
+            <div className="mt-6"><label className="agri-label" htmlFor="access">Hozzáférési kód (ha be van állítva)</label><input id="access" type="password" autoComplete="off" className="agri-input" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Csak védett telepítésnél szükséges" /></div>
+            <button type="button" disabled={!images.length || loading || uploading} onClick={runAnalysis} className="mt-6 w-full rounded-xl bg-lime-300 px-6 py-4 text-sm font-black text-[#112418] transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:bg-[#54705a] disabled:text-[#a8bfaf]">{loading ? "◌  AI felmérés folyamatban…" : "✦  AI FELMÉRÉS INDÍTÁSA"}</button>
+            {error && <div role="alert" className="mt-4 rounded-xl border border-red-500/40 bg-red-950/30 p-4 text-sm leading-6 text-red-200">{error}</div>}
+            <p className="mt-5 text-xs leading-6 text-[#83a891]">A feltöltött képeket az AI-elemzéshez az OpenAI szolgáltatás dolgozza fel. A felületen nincs fiók- vagy felmérésmentés. Ne tölts fel olyan képet, amelynek feldolgozására nincs jogosultságod.</p>
+          </section>
+
+          <section id="jelentes" className="result-section print-area min-w-0 scroll-mt-24 space-y-5">
+            {!analysis && !loading && <div className="agri-panel flex min-h-[550px] flex-col items-center justify-center p-8 text-center"><div className="mb-7 flex h-28 w-28 items-center justify-center rounded-full border border-lime-300/20 bg-[#183b27] text-5xl text-lime-300">◎</div><Pill>FELMÉRÉSRE KÉSZ</Pill><h2 className="mt-6 text-3xl font-black text-white">Itt jelenik meg az elemzésed.</h2><p className="agri-muted mt-4 max-w-md text-sm leading-7">Válassz csomagot, add meg a terület adatait, majd tölts fel saját drónfotókat. Az AI azonosítja a képen látható fontos megfigyeléseket és ellenőrizendő területeket.</p><div className="mt-8 grid w-full max-w-md grid-cols-3 gap-2">{["01 · Fotó", "02 · Elemzés", "03 · Jelentés"].map((step) => <div key={step} className="rounded-lg border border-[#294536] bg-[#13271b] px-1 py-4 text-xs font-black text-lime-300">{step}</div>)}</div></div>}
+            {loading && <div className="agri-panel flex min-h-[550px] flex-col items-center justify-center p-8 text-center" role="status"><div className="mb-8 h-16 w-16 animate-spin rounded-full border-4 border-lime-300/20 border-t-lime-300" /><Pill>AI FELDOLGOZÁS</Pill><h2 className="mt-6 text-2xl font-black text-white">Drónképek kiértékelése…</h2><p className="agri-muted mt-3 max-w-sm text-sm leading-7">Megfigyelések, kockázatok és ajánlott teendők összegyűjtése. Az eredmények tájékoztató jellegűek.</p></div>}
+            {analysis && !loading && <>
+              <div className="no-print flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[.2em] text-lime-300">Elkészült jelentés</p><h2 className="mt-1 text-2xl font-black text-white">Területértékelés</h2></div><div className="flex flex-wrap gap-2"><button onClick={saveJSON} className="rounded-xl border border-[#3b6549] px-4 py-2.5 text-xs font-bold text-[#caebd2] hover:border-lime-300">JSON mentése</button><button onClick={saveReport} className="rounded-xl bg-lime-300 px-4 py-2.5 text-xs font-black text-[#122419] hover:bg-lime-200">Mentés PDF-ként / Nyomtatás</button></div></div>
+              <div className="print-title hidden"><h1 className="text-2xl font-black">AGRI DRONE VISION — Vizuális mezőgazdasági jelentés</h1></div>
+              <div className="agri-panel print-card print-avoid p-6 sm:p-7"><div className="flex flex-wrap items-center justify-between gap-3"><Pill>AI FELMÉRÉS</Pill><Pill tone={riskTone[analysis.overallRisk] || riskTone.információ}>Kockázati szint: {analysis.overallRisk}</Pill></div><h3 className="mt-5 text-2xl font-black text-white">Összefoglaló értékelés</h3><p className="agri-muted mt-4 text-sm leading-8">{analysis.summary}</p><p className="mt-5 text-xs text-[#91ab99]">Generálva: {reportTime} · Csomag: {selectedPlan.name} · {images.length} fotó</p></div>
+              <div className="agri-panel print-card print-avoid p-6 sm:p-7"><h3 className="mb-4 text-lg font-black text-white">Terület alapadatai</h3><div className="grid gap-x-6 sm:grid-cols-2"><DataRow label="Megrendelő" value={field.client} /><DataRow label="Tábla neve" value={field.fieldName} /><DataRow label="Helyszín" value={field.location} /><DataRow label="Terület (megadott)" value={field.hectares ? `${field.hectares} ha` : ""} /><DataRow label="Kultúra" value={field.crop} /><DataRow label="Felvétel dátuma" value={field.inspectedAt} /></div>{field.notes && <div className="mt-3"><DataRow label="Megrendelői megjegyzés" value={field.notes} /></div>}</div>
+              <div className="agri-panel print-card print-avoid p-6 sm:p-7"><h3 className="mb-5 text-lg font-black text-white">Vizuális állapot áttekintése</h3><div className="grid gap-3 sm:grid-cols-2">{([ ["Növényzet", analysis.overview.vegetation], ["Talaj / felszín", analysis.overview.ground], ["Vízviszonyok", analysis.overview.water], ["Megközelítés", analysis.overview.access], ["Fotófedettség", analysis.overview.coverage] ] as [string, string][]).map(([name, description]) => <div key={name} className="rounded-xl border border-[#2d5139] bg-[#0b1a12] p-4 print-card"><p className="mb-2 text-xs font-black uppercase tracking-wide text-lime-300">{name}</p><p className="agri-muted text-sm leading-6">{description}</p></div>)}</div></div>
+              <div className="agri-panel print-card p-5 sm:p-7"><div className="mb-5 flex flex-wrap justify-between gap-3"><div><h3 className="text-lg font-black text-white">Fotó és vizuális jelölések</h3><p className="agri-muted mt-1 text-xs">A keretek hozzávetőlegesek, nem térinformatikai mérések.</p></div><Pill>{analysis.findings.length} megfigyelés</Pill></div>
+                <div className="no-print mb-3 flex flex-wrap gap-2">{images.map((img, index) => <button key={`${img.name}-${index}`} type="button" onClick={() => setActiveImage(index)} className={`rounded-lg border px-3 py-2 text-xs font-bold ${activeImage === index ? "border-lime-300 bg-lime-300 text-[#102418]" : "border-[#32533e] text-[#bbd4c2]"}`}>{index + 1}. fotó</button>)}</div>
+                <div className="no-print relative w-full overflow-hidden rounded-2xl border border-[#32533e] bg-black"><img src={images[Math.min(activeImage, images.length - 1)].dataUrl} alt={`Elemzett drónfotó ${activeImage + 1}`} className="block h-auto w-full" />{analysis.findings.filter((finding) => finding.imageIndex === activeImage && finding.box).map((finding) => {const b = finding.box!; const x = Math.max(0, Math.min(100, b.x)); const y = Math.max(0, Math.min(100, b.y)); const w = Math.max(0, Math.min(100 - x, b.width)); const h = Math.max(0, Math.min(100 - y, b.height));return <div key={finding.id} className="pointer-events-none absolute border-[3px]" style={{ left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%`, borderColor: mapTone[finding.severity] || "#bef264", boxShadow: "0 0 0 1px #0008" }} title={finding.title}><span className="absolute -top-6 left-0 whitespace-nowrap rounded bg-black/85 px-2 py-1 text-[10px] font-black text-white">#{finding.id} {finding.category}</span></div>})}</div>
+                <p className="no-print agri-muted mt-2 text-xs">Fotó: {activeImage + 1}/{images.length} · {images[activeImage]?.name}</p>
+                <div className="hidden print:block">{images.map((img, imageIndex) => <div key={imageIndex} className="print-photo"><p className="mb-2 text-xs font-bold">{imageIndex + 1}. fotó — {img.name}</p><div className="relative w-full overflow-hidden border border-[#cbd5cb]"><img src={img.dataUrl} alt={`Elemzett fotó ${imageIndex + 1}`} className="block h-auto w-full" />{analysis.findings.filter((finding) => finding.imageIndex === imageIndex && finding.box).map((finding) => { const b = finding.box!; const x = Math.max(0, Math.min(100, b.x)); const y = Math.max(0, Math.min(100, b.y)); return <div key={finding.id} className="absolute border-[3px]" style={{ left: `${x}%`, top: `${y}%`, width: `${Math.max(0, Math.min(100 - x, b.width))}%`, height: `${Math.max(0, Math.min(100 - y, b.height))}%`, borderColor: mapTone[finding.severity] || "#84cc16" }} />; })}</div></div>)}</div>
+              </div>
+              <div className="agri-panel print-card p-6 sm:p-7"><h3 className="text-lg font-black text-white">Azonosított megfigyelések</h3><p className="agri-muted mt-1 text-xs">Az AI látható jelekből dolgozik; minden fontos megállapítást érdemes a helyszínen ellenőrizni.</p>
+                <div className="mt-5 space-y-3">{analysis.findings.length === 0 ? <div className="rounded-xl border border-[#32533e] p-5 text-sm text-[#bad2c1]">Nem azonosítható megalapozott, konkrét vizuális eltérés a feltöltött képeken. Ez nem jelenti azt, hogy a terület biztosan problémamentes.</div> : analysis.findings.map((item, index) => <article className="print-avoid rounded-xl border border-[#31533d] bg-[#102118] p-5 print-card" key={`${item.id}-${index}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="mb-1 text-[10px] font-black uppercase tracking-wide text-lime-300">#{item.id} · {item.category} · {item.imageIndex + 1}. kép</p><h4 className="text-base font-black text-white">{item.title}</h4></div><Pill tone={riskTone[item.severity] || riskTone.információ}>{item.severity}</Pill></div><p className="agri-muted mt-3 text-sm leading-7">{item.observation}</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><div className="rounded-lg border border-[#294536] p-3"><p className="text-[10px] font-black uppercase text-[#8cab94]">Látható bizonyíték</p><p className="mt-1 text-xs leading-6 text-[#d4e8d9]">{item.visualEvidence}</p></div><div className="rounded-lg border border-[#294536] p-3"><p className="text-[10px] font-black uppercase text-[#8cab94]">Hol látható?</p><p className="mt-1 text-xs leading-6 text-[#d4e8d9]">{item.location}</p></div></div><p className="mt-3 text-sm leading-7 text-lime-200"><strong>Javaslat:</strong> {item.recommendation}</p><p className="agri-muted mt-2 text-xs">A vizuális megfigyelés megbízhatósága: {item.certainty}</p><button type="button" onClick={() => setActiveImage(Math.max(0, Math.min(images.length - 1, item.imageIndex)))} className="no-print mt-3 text-xs font-black text-lime-300 hover:underline">Mutasd a fotón →</button></article>)}</div>
+              </div>
+              <div className="grid gap-5 md:grid-cols-2"><div className="agri-panel print-card print-avoid p-6"><h3 className="mb-4 text-lg font-black text-white">Elsődleges teendők</h3><ul className="space-y-4">{analysis.priorities.length ? analysis.priorities.map((text, i) => <li key={i} className="flex gap-3 text-sm leading-6"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lime-300 text-xs font-black text-[#102418]">{i + 1}</span><span className="agri-muted">{text}</span></li>) : <li className="agri-muted text-sm">A képek alapján nincs egyértelműen rangsorolható beavatkozás.</li>}</ul></div><div className="agri-panel print-card print-avoid p-6"><h3 className="mb-4 text-lg font-black text-white">Javasolt helyszíni ellenőrzések</h3><ul className="space-y-3">{analysis.recommendedChecks.map((text, i) => <li key={i} className="flex gap-3 text-sm leading-6"><span className="font-black text-lime-300">✓</span><span className="agri-muted">{text}</span></li>)}</ul></div></div>
+              <div className="agri-panel print-card print-avoid p-6 sm:p-7"><h3 className="text-lg font-black text-white">Következő felmérés fókusza</h3><p className="agri-muted mt-3 text-sm leading-7">{analysis.nextVisitFocus}</p><h4 className="mt-6 text-sm font-black text-amber-300">Értelmezési korlátok</h4><ul className="agri-muted mt-3 list-inside list-disc space-y-2 text-xs leading-6">{analysis.limitations.map((line, i) => <li key={i}>{line}</li>)}<li>Az RGB-képek nem helyettesítik az NDVI-t, laborvizsgálatot, geodéziai mérést vagy agronómiai szakvéleményt.</li></ul></div>
+              <div className="no-print rounded-xl border border-[#36523e] p-4 text-xs leading-6 text-[#8fae99]">PDF készítése: kattints a „Mentés PDF-ként / Nyomtatás” gombra, majd a böngésző nyomtatási ablakában válaszd a „Mentés PDF-ként” lehetőséget.</div>
+            </>}
+          </section>
         </div>
-
-        <p className="relative z-10 mt-8 text-center text-xs text-slate-600">
-          Demó mód · fizetés jelenleg nincs bekötve
-        </p>
-      </div>
-    </main>
-  );
-}
-
-function StatusCard({
-  selectedPackage,
-}: {
-  selectedPackage: PackageConfig;
-}) {
-  return (
-    <div className="rounded-3xl border border-emerald-900/40 bg-emerald-950/20 p-5">
-      <div className="flex items-center gap-4">
-        <div className="flex items-center justify-center text-xl text-emerald-400">
-          ✓
-        </div>
-
-        <div>
-          <h2 className="font-bold text-emerald-300">
-            AI elemzés elkészült
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-400">
-            {selectedPackage.name} csomag ·{" "}
-            {selectedPackage.versions.join(" · ")} feldolgozás sikeres.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {selectedPackage.versions.map(
-          (version) => (
-            <span
-              key={version}
-              className="rounded-lg border border-emerald-900/40 bg-slate-950 px-3 py-1.5 text-xs font-bold text-emerald-400"
-            >
-              {version} ✓
-            </span>
-          )
-        )}
-      </div>
+      </main>
+      <footer className="no-print border-t border-[#25402e] px-5 py-7 text-center text-xs leading-6 text-[#89a994]">© AGRI DRONE VISION · Vizuális döntéstámogatás drónfelvételekből · Nem hivatalos kárszakértői vagy növényorvosi szakvélemény.</footer>
     </div>
-  );
-}
-
-function Panel({
-  title,
-  color,
-  badge,
-  children,
-}: {
-  title: string;
-  color: string;
-  badge?: string;
-  children: ReactNode;
-}) {
-  const borders: Record<string, string> = {
-    red: "border-red-900/40",
-    blue: "border-blue-900/40",
-    yellow: "border-yellow-900/40",
-    purple: "border-purple-900/40",
-    cyan: "border-cyan-900/40",
-    pink: "border-pink-900/40",
-    emerald: "border-emerald-900/40",
-  };
-
-  const text: Record<string, string> = {
-    red: "text-red-400",
-    blue: "text-blue-400",
-    yellow: "text-yellow-400",
-    purple: "text-purple-400",
-    cyan: "text-cyan-400",
-    pink: "text-pink-400",
-    emerald: "text-emerald-400",
-  };
-
-  return (
-    <section
-      className={`rounded-3xl border bg-slate-900 p-6 ${
-        borders[color] || "border-slate-800"
-      }`}
-    >
-      <div className="mb-5 flex items-center justify-between gap-4">
-        <h2 className="text-xl font-black">
-          {title}
-        </h2>
-
-        {badge && (
-          <span
-            className={`rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold ${
-              text[color] || "text-slate-300"
-            }`}
-          >
-            {badge}
-          </span>
-        )}
-      </div>
-
-      {children}
-    </section>
-  );
-}
-
-function Stat({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-950 p-4">
-      <p className="text-xs text-slate-500">
-        {label}
-      </p>
-
-      <p className="mt-2 break-words font-bold text-slate-200">
-        {value || "—"}
-      </p>
-    </div>
-  );
-}
-
-function MiniStat({
-  label,
-  value,
-}: {
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-950 p-3">
-      <p className="text-lg font-black">
-        {value}
-      </p>
-
-      <p className="text-[10px] text-slate-500">
-        {label}
-      </p>
-    </div>
-  );
-}
-
-function Condition({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-950 p-4">
-      <p className="text-xs text-slate-500">
-        {label}
-      </p>
-
-      <p className="mt-2 text-sm font-semibold">
-        {value || "Nem meghatározható"}
-      </p>
-    </div>
-  );
-}
-
-function Empty({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-950 p-5 text-sm text-slate-500">
-      {text}
-    </div>
-  );
-}
-
-function EmptyScreen({
-  selectedPackage,
-}: {
-  selectedPackage: PackageConfig;
-}) {
-  return (
-    <div className="flex min-h-[600px] items-center justify-center rounded-3xl border border-slate-800 bg-slate-900">
-      <div className="text-center">
-        <div className="flex items-center justify-center">
-          <img
-            src="/ai-drone-vision.png"
-            alt="AI Drone Vision"
-            className="h-60 w-60 object-contain"
-          />
-        </div>
-
-        <h2 className="mt-5 text-2xl font-bold">
-          {selectedPackage.name} AI Vision Engine
-        </h2>
-
-        <p className="mt-2 text-sm text-slate-500">
-          {selectedPackage.id === "START"
-            ? "Tölts fel egy ingatlanfotót az elemzéshez."
-            : "Tölts fel akár 8 ingatlanfotót az összevont elemzéshez."}
-        </p>
-
-        <div className="mt-5 flex justify-center gap-2">
-          {selectedPackage.versions.map(
-            (version) => (
-              <span
-                key={version}
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-500"
-              >
-                {version}
-              </span>
-            )
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LoadingScreen({
-  selectedPackage,
-}: {
-  selectedPackage: PackageConfig;
-}) {
-  return (
-    <div className="flex min-h-[600px] items-center justify-center rounded-3xl border border-slate-800 bg-slate-900">
-      <div className="text-center">
-        <div className="mx-auto h-16 w-16 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500" />
-
-        <h2 className="mt-6 text-xl font-bold">
-          AI Vision Engine dolgozik
-        </h2>
-
-        <p className="mt-2 text-sm text-slate-500">
-          {selectedPackage.name} csomag feldolgozása
-        </p>
-
-        <div className="mt-4 flex justify-center gap-2">
-          {selectedPackage.versions.map(
-            (version) => (
-              <span
-                key={version}
-                className="rounded-md bg-slate-950 px-2 py-1 text-[10px] font-bold text-blue-400"
-              >
-                {version}
-              </span>
-            )
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function clamp(
-  value: number,
-  min: number,
-  max: number
-) {
-  if (!Number.isFinite(value)) {
-    return min;
-  }
-
-  return Math.min(
-    Math.max(value, min),
-    max
   );
 }

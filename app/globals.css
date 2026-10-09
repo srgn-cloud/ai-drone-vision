@@ -1,26 +1,39 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+:root { color-scheme: dark; }
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: #08120e; color: #e6f5ea; font-family: Arial, Helvetica, sans-serif; }
+::selection { background: #bbf7d0; color: #052e16; }
+button:not(:disabled), select:not(:disabled), input:not(:disabled) { cursor: pointer; }
+.agri-grid { background-image: linear-gradient(rgba(151, 237, 176, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(151, 237, 176, .035) 1px, transparent 1px); background-size: 36px 36px; }
+.glow { background: radial-gradient(ellipse at 80% 0%, rgba(30, 116, 70, .26), transparent 48%); }
+.agri-input { width: 100%; outline: none; border: 1px solid #294536; background: #0b1912; border-radius: 12px; padding: 12px 14px; font-size: 14px; color: #eefcf2; transition: border-color .2s; }
+.agri-input:focus { border-color: #8dda9e; }
+.agri-input::placeholder { color: #6d8c79; }
+.agri-label { display: block; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; color: #89a897; margin-bottom: 8px; }
+.agri-panel { border: 1px solid #294536; background: rgba(15, 32, 23, .94); border-radius: 22px; }
+.agri-muted { color: #96b2a2; }
+.agri-pill { border: 1px solid #30513b; background: #173123; color: #a9dcb5; border-radius: 999px; padding: 6px 11px; font-size: 11px; font-weight: 700; }
+@media print {
+  :root { color-scheme: light; }
+  html, body { background: #fff !important; color: #172b20 !important; font-family: Arial, Helvetica, sans-serif; }
+  header, footer, .no-print, .input-section, .intro-section { display: none !important; }
+  main, .print-area { padding: 0 !important; margin: 0 !important; max-width: none !important; width: 100% !important; }
+  .agri-panel, .print-card { background: #fff !important; color: #172b20 !important; border: 1px solid #c9d7ce !important; box-shadow: none !important; }
+  .agri-muted, .print-card p, .print-card span { color: #374f3d !important; }
+  .print-avoid { break-inside: avoid; page-break-inside: avoid; }
+  .print-title { display: block !important; }
+  .glow, .agri-grid { background: none !important; }
+  @page { size: A4; margin: 12mm; }
 }
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@media print {
+  .print-card h1, .print-card h2, .print-card h3, .print-card h4, .print-title h1, .print-card strong { color: #183426 !important; }
+  .print-card .text-lime-300, .print-card .text-lime-200, .print-card .text-amber-300 { color: #245f36 !important; }
+  .print-card ul, .print-card li, .print-card div { color: #243f2d !important; }
+  img { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .print-photo { break-inside: avoid; page-break-inside: avoid; margin: 8mm 0; }
 }
